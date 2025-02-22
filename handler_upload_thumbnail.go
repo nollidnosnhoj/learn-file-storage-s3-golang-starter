@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
@@ -46,14 +48,11 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	defer formFile.Close()
 	mediaType := fileHeader.Header.Get("Content-Type")
 
-	// Get file extension based on content type
-	var fileExtension string
-	validExtensions, err := mime.ExtensionsByType(mediaType)
-	if err != nil || len(validExtensions) == 0 {
-		fileExtension = "application/octet-stream"
+	fileName, err := createRandomThumbnailFilename(mediaType)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to upload thumbnail", err)
+		return
 	}
-	fileExtension = validExtensions[0]
-	fileName := fmt.Sprintf("%s%s", videoID, fileExtension)
 	thumbnailPath := filepath.Join(cfg.assetsRoot, fileName)
 	thumbnailFile, err := os.Create(thumbnailPath)
 	if err != nil {
@@ -86,4 +85,21 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 
 	respondWithJSON(w, http.StatusOK, videoMetadata)
+}
+
+func createRandomThumbnailFilename(mediaType string) (string, error) {
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	if err != nil {
+		return "", err
+	}
+	name := base64.RawURLEncoding.EncodeToString(key)
+
+	var ext string
+	exts, err := mime.ExtensionsByType(mediaType)
+	if err != nil || len(exts) == 0 {
+		ext = ""
+	}
+	ext = exts[0]
+	return name + ext, nil
 }
