@@ -1,10 +1,12 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -30,27 +32,41 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-
 	fmt.Println("uploading thumbnail for video", videoID, "by user", userID)
 
 	// TODO: implement the upload here
 	const maxMemory = 10 << 20
 	r.ParseMultipartForm(maxMemory)
 
-	file, fileHeader, err := r.FormFile("thumbnail")
+	formFile, fileHeader, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
 		return
 	}
+	defer formFile.Close()
 	mediaType := fileHeader.Header.Get("Content-Type")
 
-	data, err := io.ReadAll(file)
+	// Get file extension based on content type
+	var fileExtension string
+	validExtensions, err := mime.ExtensionsByType(mediaType)
+	if err != nil || len(validExtensions) == 0 {
+		fileExtension = "application/octet-stream"
+	}
+	fileExtension = validExtensions[0]
+	fileName := fmt.Sprintf("%s%s", videoID, fileExtension)
+	thumbnailPath := filepath.Join(cfg.assetsRoot, fileName)
+	thumbnailFile, err := os.Create(thumbnailPath)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to read file", err)
+		respondWithError(w, http.StatusInternalServerError, "Unable to upload thumbnail", err)
 		return
 	}
-	base64Data := base64.StdEncoding.EncodeToString(data)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", mediaType, base64Data)
+	defer thumbnailFile.Close()
+	_, err = io.Copy(thumbnailFile, formFile)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Unable to upload thumbnail", err)
+		return
+	}
+
 	videoMetadata, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to get video metadata", err)
@@ -61,7 +77,8 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	videoMetadata.ThumbnailURL = &dataURL
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, fileName)
+	videoMetadata.ThumbnailURL = &thumbnailURL
 	err = cfg.db.UpdateVideo(videoMetadata)
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "Unable to save video metadata", err)
